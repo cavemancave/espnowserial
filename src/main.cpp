@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <driver/gpio.h>
+#include <esp_system.h>
 #include <string.h>
 
 #include "config.h"
@@ -552,6 +553,29 @@ static void processAt(const String &command) {
 void setup() {
   pinMode(PIN_LED, OUTPUT);
   ledWrite(false);
+
+  // Boot marker: three quick blinks before NVS or the radio are touched.  This
+  // runs on every reset, so with no USB console attached it still tells you how
+  // far the board got - see the FAQ about powering it from the 5V/3V3 pins.
+  for (int i = 0; i < 3; ++i) {
+    ledWrite(true);
+    delay(60);
+    ledWrite(false);
+    delay(60);
+  }
+
+  // A burst of fast blinks after the marker means the previous reset was a
+  // brownout: the rail sagged below the detector threshold while the radio was
+  // transmitting.  That is the classic symptom of feeding 3.3V into the 5V pin
+  // (LDO dropout) or of a supply that cannot deliver the TX current spike.
+  if (esp_reset_reason() == ESP_RST_BROWNOUT) {
+    for (int i = 0; i < 12; ++i) {
+      ledWrite(true);
+      delay(40);
+      ledWrite(false);
+      delay(40);
+    }
+  }
 
   settingsBegin();
 
