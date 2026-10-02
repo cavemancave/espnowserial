@@ -55,7 +55,7 @@ ports         : USB + UART1(RX4/TX3)
 ### 波特率与吞吐量
 
 **USB 口不看波特率。** 它是 ESP32-C3 的原生 USB CDC，速率由 USB Full-Speed 决定，
-`AT+BAUD` 对它完全没有影响 —— 所以只用 USB 的话，改不改波特率都一样。
+`AT+BAUD` 对它完全没有影响，只用 USB 的话改不改都一样。
 
 **`AT+BAUD` 只影响 UART0/UART1**（两者共用同一个值，不能分开设），默认已经设成 **921600（8 倍）**。
 接外接 TTL 设备时把它设成同样的值即可；如果接的是只支持 115200 的老设备，
@@ -78,23 +78,17 @@ ports         : USB + UART1(RX4/TX3)
 - 天花板约 **1.0~1.16 Mbaud 等效（≈100~116 kB/s）**。
 - 瓶颈在**发送板接收 USB 数据**这一段，**不是 ESP-NOW** —— 空中链路在测到的所有速率下
   都是 **0% 丢包**，接收侧环形缓冲溢出也是 0。
-- 再往上灌，丢的是「主机 → 发送板」这一段。用 `AT+SYSINFO` 看 `rx overflow` 和
-  `console drop` 就能判断丢在哪一环。
+- 再往上灌，丢的是「主机 → 发送板」这一段，不是空中。用 `AT+SYSINFO` 的计数器定位：
+  `console drop` / `rx overflow` = 某一侧的串口来不及接收（USB 写不完或环形缓冲满），
+  `tx errors` = ESP-NOW 发送失败，`rx dropped` = 拒收的非配对帧。
 - 以上是两块板近距、无干扰的理想值；距离拉远、周围 2.4G 拥挤时会下降。
 
-### UART0 的引脚可以改吗？
+### 引脚怎么改（UART0 / UART1 通用）
 
 **可以随便改。** ESP32-C3 的 UART 信号走 **GPIO 矩阵**（核心源码里就是
 `esp_rom_gpio_connect_in_signal` / `esp_rom_gpio_connect_out_signal`），不像有些 MCU 那样
-把 UART 绑死在固定管脚上；核心也没有任何"可用引脚白名单"。你在
-`Serial0.begin(baud, cfg, rx, tx)` 里给哪两个脚，信号就从哪两个脚走。
-
-改法就是 `include/config.h` 里两行：
-
-```c
-#define PIN_UART0_RX   4     // 换成你想要的脚
-#define PIN_UART0_TX   5
-```
+把 UART 绑死在固定管脚上；核心也没有任何"可用引脚白名单"。给
+`Serial0.begin(baud, cfg, rx, tx)` 传哪两个脚，信号就从哪两个脚走。
 
 这块板（HW-953AB）引出来的脚是 **0 1 2 3 4 5 6 7 8 9 10 20 21**：
 
@@ -107,7 +101,16 @@ ports         : USB + UART1(RX4/TX3)
 `config.h` 里已经加了编译期检查，选错会**直接编译报错**，不会等烧进去才发现：
 
 ```
-config.h:53:6: error: #error "GPIO11..GPIO17 are wired to the in-package SPI flash and cannot be used"
+config.h:60:1: error: #error "GPIO11..GPIO17 are wired to the in-package SPI flash and cannot be used"
+```
+
+**UART0** 是唯一"有默认引脚"的口 —— 芯片硬件层面就接在 **GPIO20（RX）/ GPIO21（TX）** 上，
+ROM bootloader 也用它。要换脚就改 `config.h` 里这几行：
+
+```c
+#define ENABLE_UART0_BRIDGE 1
+#define PIN_UART0_RX   5     // 换成你想要的脚；注意别和 UART1 撞脚
+#define PIN_UART0_TX   6
 ```
 
 接线注意：
@@ -116,20 +119,14 @@ config.h:53:6: error: #error "GPIO11..GPIO17 are wired to the in-package SPI fla
 - **RX/TX 交叉**接（你的 TX → 对方 RX）。
 - 换脚之后，上电瞬间 ROM bootloader 仍然会把启动日志以 115200 打在 **GPIO21**
   （硬件默认的 U0TXD，改不掉）。不影响运行，只是每次复位会看到一点乱码。
-- 也可以改用 **UART1**（C3 一共 2 个 UART，`Serial1`）。但保留 UART0 有实际好处：
-  那些 USB-C 后面焊 CH340/CP2102 的板子，转接芯片接的正好是 UART0，
-  换成 UART1 就够不到电脑了 —— 这也是本固件"一个固件兼容两种板子"的关键。
+- 想留一个 TTL 口给 USB-C 后面焊 CH340/CP2102 的板子，请用 **UART0**：
+  那些转接芯片接的正好是 GPIO20/21，换成 UART1 就够不到电脑了 ——
+  这也是本固件"一个固件兼容两种板子"的关键。
 
 ### UART1 的引脚在哪？
 
-**没有默认引脚。** 这是 UART0 和 UART1 最大的区别：
-
-| | 硬件默认引脚 | 说明 |
-| --- | --- | --- |
-| UART0 | **GPIO20 / GPIO21** | 芯片硬件层面就接在这对脚上，ROM bootloader 也用它，改不掉 |
-| UART1 | **无** | 完全靠 GPIO 矩阵，`Serial1` 初始化时两个脚都是 `-1`（未分配） |
-
-所以 UART1 用哪两个脚，**完全由下面这两行决定**，改完重新编译烧录即可：
+**UART1（`Serial1`）没有默认引脚** —— 这是它和 UART0 最大的区别。它完全靠 GPIO 矩阵，
+`Serial1` 初始化时两个脚都是 `-1`（未分配），在哪出现**完全由这两行决定**：
 
 ```c
 #define ENABLE_UART1  1     // 1 = 用上这个口，0 = 放开 GPIO3/GPIO4
@@ -137,7 +134,11 @@ config.h:53:6: error: #error "GPIO11..GPIO17 are wired to the in-package SPI fla
 #define PIN_UART1_TX  3     // 板子丝印 A3
 ```
 
-注意不能和 `PIN_UART0_*` 用同一对脚（一个脚只能承载一路信号），`config.h` 里有编译期检查会拦住。
+两个口不能共用同一对脚（一个脚只能承载一路信号），重叠时 `config.h` 会拦下来：
+
+```
+config.h:97:1: error: #error "PIN_UART1_* overlap with PIN_UART0_* - one pin cannot carry two signals"
+```
 
 ### 怎么确认 UART1 真的在收发？
 
@@ -156,8 +157,8 @@ PASS  board A (3C:0F:02:BB:CC:44): UART1 TX=GPIO3 + RX=GPIO4 verified
 PASS  board B (3C:0F:02:BB:C5:50): UART1 TX=GPIO3 + RX=GPIO4 verified
 ```
 
-> 验证完记得**把短接线拔掉**。留着的话所有控制台输出都会回环、并被转发到对端，
-> 对端会一直收到本机的日志噪声。
+> 验证完记得**把短接线拔掉**。留着的话控制台输出会一直回环，并被转发到对端；
+> 两块板都短接更会让整条链路自己循环起来，第 4 节有详细分析。
 
 ---
 
@@ -344,7 +345,8 @@ src/main.cpp          串口镜像、透传/AT 状态机、LED、AT 指令
 
 ### 空中协议
 
-每帧 ESP-NOW 数据的第 1 个字节是类型，后面是负载（单帧最多 250 字节，用户数据按 200 字节切片）：
+每帧 ESP-NOW 数据的第 1 个字节是类型，后面是负载（ESP-NOW 单帧上限 250 字节，用户数据按
+`ESPNOW_CHUNK` 切片，默认 240 字节）：
 
 | 类型 | 值 | 含义 |
 | --- | --- | --- |
@@ -364,9 +366,12 @@ src/main.cpp          串口镜像、透传/AT 状态机、LED、AT 指令
 #define PIN_UART1_TX       3
 #define DEFAULT_BAUD       921600 // 只影响 UART0/UART1，USB 口忽略波特率
 #define DEFAULT_CHANNEL    1
-#define ESPNOW_CHUNK       240   // 每帧承载的用户字节数（1 字节帧头）
+#define ESPNOW_CHUNK       240   // 每帧承载的用户字节数（留 1 字节帧头，上限 250）
+#define TX_COALESCE_MS     5     // 攒够这么久再发一帧，避免每个字节一包
 #define PEER_TIMEOUT_MS    4000  // 多久收不到心跳算掉线
-#define CONSOLE_RX_BUFFER  4096  // 串口收发环形缓冲（核心默认只有 256）
+#define ESCAPE_GUARD_MS    1000  // `+++` 前后各需要的静默时间
+#define CONSOLE_RX_BUFFER  4096  // 串口接收环形缓冲（核心默认只有 256）
+#define CONSOLE_TX_BUFFER  2048  // 串口发送环形缓冲
 #define CONSOLE_RX_BUDGET  256   // 每个口每轮最多处理多少字节，防止自激时饿死主循环
 ```
 
@@ -397,10 +402,9 @@ DTR/RTS 拉起来，ESP32-C3 把它当成 USB 复位请求（`rst:0x15 USB_UART_
 
 - **丢内容**：先关掉状态信息 `AT+VERBOSE=0`，否则链路状态变化时的提示文字会
   插进透传数据里。
-- **丢字节**：看 `AT+SYSINFO` 的计数器定位
-  （`tx errors` / `rx overflow` / `console drop`）。实测 921600 以内零丢包；
-  再快就会丢在「主机 → 发送板」那一段。ESP-NOW 本身不丢。
+- **丢字节**：用 `AT+SYSINFO` 的计数器定位，各计数器含义见第 1 节「波特率与吞吐量」的结论：
+  `console drop` / `rx overflow` 是某一侧的串口来不及收，`tx errors` 是空中发送失败。
 
 **GPIO20/21 上接着别的东西会不会打架？**
-本固件默认已经把 `ENABLE_UART0_BRIDGE` 设为 `0`，GPIO20/21 完全空着，可以直接当普通 IO 用。
-如果你手动把它打开了，UART0 就会一直驱动 GPIO21 并在 GPIO20 上接收，那两脚另有用途时要改回 `0`。
+默认不会 —— `ENABLE_UART0_BRIDGE` 为 `0` 时应用完全不驱动这两脚，可以当普通 IO 用。
+手动打开之后 UART0 会一直驱动 GPIO21、并在 GPIO20 上接收，那两脚另有用途时改回 `0` 即可。
