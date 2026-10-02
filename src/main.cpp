@@ -343,7 +343,8 @@ static void atHelp() {
   consolePrintln("AT+PAIR=<MAC>        pair with a peer, e.g. AT+PAIR=AA:BB:CC:DD:EE:FF");
   consolePrintln("AT+UNPAIR            forget the paired peer");
   consolePrintln("AT+CHANNEL=<1-13>    radio channel, both ends must match (default 1)");
-  consolePrintln("AT+BAUD=<rate>       console baud rate, default 115200");
+  consolePrintln(String("AT+BAUD=<rate>       console baud rate (UART0/UART1), default ") +
+                 String(DEFAULT_BAUD));
   consolePrintln("AT+AUTOPAIR=<0|1>    pair automatically with the first peer found");
   consolePrintln("AT+VERBOSE=<0|1>     print status messages while in data mode");
   consolePrintln("AT+TEST              send a test packet to the peer");

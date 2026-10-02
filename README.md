@@ -170,9 +170,12 @@ PASS  board B (3C:0F:02:BB:C5:50): UART1 TX=GPIO3 + RX=GPIO4 verified
 pio run                                        # 编译
 pio run -t upload -p /dev/ttyACM0              # 烧录第一块板
 pio run -t upload -p /dev/ttyACM1              # 烧录第二块板
-pio device monitor -p /dev/ttyACM0             # 监视第一块板，115200
+pio device monitor -p /dev/ttyACM0             # 监视第一块板（USB 口忽略波特率）
 pio device monitor -p /dev/ttyACM1             # 监视第二块板（另开一个终端）
 ```
+
+> 波特率只对 **UART0/UART1** 有意义（固件默认 **921600**，`AT+BAUD` 可改）；
+> USB 是原生 USB CDC，填什么都行。
 
 也可以直接在 VS Code 里点 PlatformIO 工具栏的 **Build / Upload / Monitor**。
 两块板刷的是**同一个** `env:esp32-c3-pro-mini`。
@@ -230,7 +233,10 @@ pio device monitor -p "$P"
 ## 3. 快速上手
 
 1. 两块板都烧好固件，分别插到电脑上。
-2. 打开两个串口监视器（115200），会各看到一行 MAC 地址：
+2. 打开两个串口监视器，会各看到一行 MAC 地址：
+
+   > USB 口忽略波特率，填 115200 或 921600 都一样；只有用 UART0/UART1 接 TTL
+   > 设备时才需要对齐，固件默认是 **921600**。
 
    ```
    === espnow-serial 1.0.0 - ESP32-C3 Pro Mini ===
